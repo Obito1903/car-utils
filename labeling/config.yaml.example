@@ -1,0 +1,7 @@
+influxdb:
+  url: "https://influx.example.com"
+  org: "car-copilot"
+  token: "token_here"
+
+pg:
+  connection: host=<host> user=car-copilot dbname=car-copilot sslmode=disable password=<password>
