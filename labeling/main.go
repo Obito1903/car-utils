@@ -67,6 +67,7 @@ func main() {
 	pf.Float64("value", 0, "value")
 	pf.String("start", "2006-01-02 15:04:05", "start time")
 	pf.String("end", "2006-01-02 15:04:05", "end time")
+	pf.Bool("delete", false, "delete data from start to end time")
 	pf.Parse(os.Args[1:])
 
 	if err := k.Load(file.Provider(pf.Lookup("config").Value.String()), yaml.Parser()); err != nil {
@@ -91,7 +92,6 @@ func main() {
 
 	client := influxdb2.NewClient(url, token)
 	defer client.Close()
-	queryAPI := client.QueryAPI(org)
 	// Get points from Vehicle speed
 
 	start, err := time.ParseInLocation("2006-01-02 15:04:05", k.String("start"), time.Local)
@@ -105,6 +105,42 @@ func main() {
 	}
 
 	bucket := k.String("bucket")
+	// log.Debug().Msgf("pointTimestamp: %v", pointTimestamp)
+	if k.Bool("delete") {
+		delete(bucket, start, end, client, org, k.String("measurement"))
+	} else {
+		label(bucket, start, end, client, org)
+	}
+
+}
+
+func delete(bucket string, start time.Time, end time.Time, client influxdb2.Client, org string, measurement string) {
+	deleteAPI := client.DeleteAPI()
+	orgObj, err := client.OrganizationsAPI().FindOrganizationByName(context.Background(), org)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	bucketObj, err := client.BucketsAPI().FindBucketByName(context.Background(), bucket)
+	if err != nil {
+		log.Fatal().Err(err)
+	}
+	if bucketObj == nil {
+		log.Info().Msgf("Creating bucket %s in org %s", bucket, orgObj.Name)
+
+		bucketObj, err = client.BucketsAPI().CreateBucketWithName(context.Background(), orgObj, bucket)
+		if err != nil {
+			log.Fatal().Err(err)
+		}
+	}
+
+	log.Info().Msgf("Deleting data from %s to %s for bucket %s in org %s", start, end, bucketObj.Name, orgObj.Name)
+	deleteAPI.Delete(context.Background(), orgObj, bucketObj, start, end, fmt.Sprintf("_measurement=\"%s\"", measurement))
+
+}
+
+func label(bucket string, start time.Time, end time.Time, client influxdb2.Client, org string) {
+	queryAPI := client.QueryAPI(org)
+
 	query := fmt.Sprintf(`
 from(bucket: "%s")
   |> range(start: %d, stop: %d)
@@ -156,7 +192,7 @@ from(bucket: "%s")
 		if pointTimestamp.After(end) || pointTimestamp.Before(start) {
 			continue
 		} else {
-			// log.Debug().Msgf("pointTimestamp: %v", pointTimestamp)
+
 			newPoint := influxdb2.NewPoint(k.String("measurement"), map[string]string{}, map[string]interface{}{
 				"value": value,
 			}, pointTimestamp)
